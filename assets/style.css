@@ -1,0 +1,17 @@
+body {
+    background-color: #fdf6f0;
+    font-family: 'Poppins', sans-serif;
+}
+
+.table td, .table th {
+    vertical-align: middle;
+}
+
+.card {
+    border: none;
+    border-radius: 10px;
+}
+
+.navbar-brand {
+    font-size: 1.3rem;
+}
