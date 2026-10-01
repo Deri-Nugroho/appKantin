@@ -1,4 +1,10 @@
 <?php
+// Cegah cache: info server harus selalu berasal dari request yang baru
+if (!headers_sent()) {
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+}
+
 // Info server untuk ditampilkan di header
 if (!function_exists('ambil_ip_server')) {
     function ambil_ip_server(string $hostname): array
@@ -26,9 +32,12 @@ if (!function_exists('ambil_ip_server')) {
     }
 }
 
-$info_hostname = gethostname() ?: '-';
+$info_hostname  = gethostname() ?: '-';
 $info_ip_server = implode(', ', ambil_ip_server($info_hostname)) ?: '-';
-$info_ip_client = $_SERVER['REMOTE_ADDR'] ?? '-';
+$info_ip_client = ($_SERVER['REMOTE_ADDR'] ?? '-') . ':' . ($_SERVER['REMOTE_PORT'] ?? '-');
+$info_waktu     = date('H:i:s');
+// Warna badge hostname berbeda per replika (turunan dari hostname)
+$info_warna     = 'hsl(' . (hexdec(substr(md5($info_hostname), 0, 6)) % 360) . ', 55%, 32%)';
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -72,9 +81,10 @@ $info_ip_client = $_SERVER['REMOTE_ADDR'] ?? '-';
 <body>
 <div class="info-server">
     <div class="container">
-        <span class="item"><span class="label">Hostname</span><span class="nilai"><?= htmlspecialchars($info_hostname) ?></span></span>
+        <span class="item"><span class="label">Hostname</span><span class="nilai" style="background:<?= htmlspecialchars($info_warna) ?>"><?= htmlspecialchars($info_hostname) ?></span></span>
         <span class="item"><span class="label">IP server</span><span class="nilai"><?= htmlspecialchars($info_ip_server) ?></span></span>
         <span class="item"><span class="label">IP client</span><span class="nilai"><?= htmlspecialchars($info_ip_client) ?></span></span>
+        <span class="item"><span class="label">Waktu</span><span class="nilai"><?= htmlspecialchars($info_waktu) ?></span></span>
     </div>
 </div>
 <nav class="navbar navbar-dark navbar-expand-lg mb-4" style="background-color:#c0392b;">
