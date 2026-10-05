@@ -7,18 +7,38 @@
 
 // ==== KONFIGURASI DATABASE (SESUAIKAN JIKA PERLU) ====
 
-// ===== KONFIGURASI UNTUK DOCKER SWARM =====
-// Saat menggunakan Docker Swarm dengan MariaDB container:
-// $DB_HOST = "db";  // Nama container MariaDB
+// ===== KONFIGURASI UNTUK DOCKER SWARM (Docker Snap - Ubuntu Core/EC2 AWS) =====
+// Jika Docker diinstall via Snap, gunakan bridge gateway IP:
+// $DB_HOST = "172.17.0.1";  // IP bridge gateway (cek dengan: docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}')
 // $DB_USER = "root";
 // $DB_PASS = "rahasia";  // Sesuai MARIADB_ROOT_PASSWORD
 // $DB_NAME = "appdb";  // Sesuai MARIADB_DATABASE
 
+// ===== KONFIGURASI UNTUK DOCKER SWARM (Docker Standard - Bukan Snap) =====
+// Jika Docker diinstall via apt/manual (bukan Snap), bisa gunakan hostname:
+// $DB_HOST = "db";  // Nama service/container MariaDB
+// $DB_USER = "root";
+// $DB_PASS = "rahasia";
+// $DB_NAME = "appdb";
+
 // ===== KONFIGURASI LOKAL (XAMPP/Laragon) =====
-$DB_HOST = "localhost";
+// $DB_HOST = "localhost";
+// $DB_USER = "root";
+// $DB_PASS = "";
+// $DB_NAME = "kantin_db";
+
+// ===== KONFIGURASI AKTIF (Ubah sesuai environment Anda) =====
+// Untuk Docker Snap (Ubuntu Core/EC2 AWS):
+$DB_HOST = "172.17.0.1";  // IP bridge gateway
 $DB_USER = "root";
-$DB_PASS = "";
-$DB_NAME = "kantin_db";
+$DB_PASS = "rahasia";
+$DB_NAME = "appdb";
+
+// Untuk Docker Standard atau Local Development:
+// $DB_HOST = "localhost";
+// $DB_USER = "root";
+// $DB_PASS = "";
+// $DB_NAME = "kantin_db";
 
 // ==== 1. Konek ke MySQL tanpa pilih database dulu ====
 $conn = new mysqli($DB_HOST, $DB_USER, $DB_PASS);

@@ -1,5 +1,7 @@
 # Aplikasi Kantin + Sistem Pemesanan (PHP + MySQL + Bootstrap)
 
+⚠️ **Untuk deployment Docker Swarm, baca file DOCKER_SWARM_GUIDE.md terlebih dahulu!** File tersebut berisi panduan lengkap dan solusi untuk menghindari error saat deployment di Docker Snap (Ubuntu Core/EC2 AWS).
+
 Aplikasi kantin dengan alur pemesanan lengkap: **pramusaji mencatat pesanan tamu di meja tertentu**, lalu **pesanan otomatis muncul di layar dapur** untuk disiapkan.
 
 Database, tabel, dan data dummy otomatis dibuat saat file PHP pertama kali dibuka — tidak perlu import `.sql` manual.
@@ -91,130 +93,128 @@ kantin_order_app/
 ## Overview
 Dokumentasi ini menjelaskan cara men-deploy aplikasi appKantin menggunakan Docker Swarm dengan konfigurasi single node (1 manager yang juga berfungsi sebagai worker). Database MariaDB akan dijalankan sebagai container terpisah yang dapat diakses oleh semua replika web service.
 
+## ⚠️ PENTING: Cek Jenis Instalasi Docker
+
+Sebelum deployment, cek jenis instalasi Docker:
+```bash
+sudo docker info | grep "Docker Root Dir"
+```
+
+### Jika Output: `/var/snap/docker/common/var-lib-docker`
+Docker diinstall via **Snap** (Ubuntu Core/EC2 AWS). Ada keterbatasan:
+- ❌ Overlay network untuk Swarm service akan menyebabkan error "read-only file system"
+- ✅ Solusi: Gunakan host network untuk database dan ingress network default untuk web service
+- **Lihat file DOCKER_SWARM_GUIDE.md untuk panduan lengkap khusus Docker Snap**
+
+### Jika Output: `/var/lib/docker`
+Docker diinstall via apt/manual (bukan Snap). Anda bisa menggunakan overlay network standar.
+
 ## Prasyarat
 - Docker dan Docker Swarm sudah terinstall
 - Akses ke server (EC2 AWS atau server lain)
 - Akses internet untuk pull image
 
+## Penting: Setup Permission Docker
+
+Jika Anda mengalami error "permission denied while trying to connect to the docker API", Anda perlu memberikan akses Docker ke user Anda:
+
+### Solusi 1: Gunakan sudo (Sementara - Disarankan untuk Docker Snap)
+Jalankan semua perintah Docker dengan sudo:
+```bash
+sudo docker pull trafex/php-nginx
+sudo docker swarm init
+```
+
+### Solusi 2: Tambah User ke Docker Group (Permanen)
+```bash
+# Tambah user ke docker group
+sudo usermod -aG docker ubuntu
+
+# Refresh group membership
+newgrp docker
+
+# Verifikasi - sekarang bisa tanpa sudo
+docker ps
+```
+
+**Catatan**: Di Docker Snap, group docker mungkin belum ada. Jika error, gunakan solusi 1 (sudo).
+
 ## Langkah-langkah Deployment
 
-### 1. Pull Docker Images
-```bash
-# Pull image web server (PHP + Nginx)
-docker pull trafex/php-nginx
+⚠️ **Untuk panduan lengkap dan troubleshooting, lihat file DOCKER_SWARM_GUIDE.md**
 
-# Pull image MariaDB
-docker pull mariadb:11.8
+### Quick Start (Untuk Docker Snap - Ubuntu Core/EC2 AWS)
+
+#### 1. Pull Docker Images
+```bash
+sudo docker pull trafex/php-nginx
+sudo docker pull mariadb:11.8
 ```
 
-### 2. Inisialisasi Docker Swarm
+#### 2. Inisialisasi Docker Swarm
 ```bash
-# Cek jika ada multiple IP (sering terjadi di WSL)
-docker swarm init
-
-# Jika muncul error multiple IP, gunakan IP spesifik:
-# Error: could not choose an IP address to advertise since this system has multiple addresses
-# Solusi:
-docker swarm init --advertise-addr <IP_ADDRESS>
+sudo docker swarm init --advertise-addr <YOUR_PUBLIC_IP>
 # Contoh:
-docker swarm init --advertise-addr 10.100.100.105
+sudo docker swarm init --advertise-addr 54.83.79.145
 ```
 
-### 3. Persiapkan Direktori Aplikasi
+#### 3. Cek Bridge Gateway IP
 ```bash
-# Buat direktori untuk aplikasi
+sudo docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'
+# Output biasanya: 172.17.0.1
+```
+
+#### 4. Persiapkan Direktori Aplikasi
+```bash
 mkdir -p /home/ubuntu/appKantin
 cd /home/ubuntu/appKantin
-
-# Copy semua file appKantin ke direktori ini
-# (upload via scp, git clone, atau copy dari local)
+git clone https://github.com/Deri-Nugroho/appKantin.git temp
+mv temp/* .
+rm -rf temp
 ```
 
-### 4. Jalankan Container MariaDB
+#### 5. Konfigurasi Database
+Edit `config/db.php`:
 ```bash
-# Jalankan MariaDB dengan konfigurasi environment
-docker run -d --name db \
-  -p 3306:3306 \
+nano config/db.php
+```
+Ubah:
+```php
+$DB_HOST = "172.17.0.1";  // IP bridge gateway dari langkah 3
+$DB_USER = "root";
+$DB_PASS = "rahasia";
+$DB_NAME = "appdb";
+```
+
+#### 6. Jalankan MariaDB dengan Host Network
+```bash
+sudo docker run -d --name db \
+  --network host \
   -e MARIADB_ROOT_PASSWORD=rahasia \
   -e MARIADB_DATABASE=appdb \
   -v dbdata:/var/lib/mysql \
   mariadb:11.8
-
-# Verifikasi container berjalan
-docker ps
-docker logs db
 ```
 
-### 5. Konfigurasi Database di aplikasi
-Edit file `config/db.php` untuk menghubungkan ke MariaDB container:
-
-```php
-// config/db.php
-$DB_HOST = "db";  // Nama container MariaDB
-$DB_USER = "root";
-$DB_PASS = "rahasia";
-$DB_NAME = "appdb";  // Sesuai dengan MARIADB_DATABASE
-```
-
-### 6. Buat Docker Service untuk Aplikasi Web
+#### 7. Buat Web Service
 ```bash
-# Buat service dengan 3 replika
-docker service create --name web \
+sudo docker service create --name web \
   -p 8080:8080 \
   --mount type=bind,source=/home/ubuntu/appKantin,target=/var/www/html \
-  --network overlay  # Otomatis terhubung ke swarm network
   trafex/php-nginx
-
-# Pastikan service web dapat mengakses container db
-# Jika perlu, connect ke network yang sama:
-docker network connect $(docker network ls --filter name=ingress --format '{{.Name}}') db
 ```
 
-**Catatan Penting:** Untuk menghubungkan service swarm dengan standalone container (db), kita perlu:
+#### 8. Scale ke 3 Replika
 ```bash
-# Buat network bridge untuk komunikasi
-docker network create app-network
-
-# Connect container db ke network
-docker network connect app-network db
-
-# Update service web untuk menggunakan network ini
-docker service update --network-add app-network web
+sudo docker service scale web=3
 ```
 
-### 7. Scale Service ke 3 Replika
-```bash
-# Scale service web ke 3 replika
-docker service scale web=3
-
-# Cek status service
-docker service ls
-docker service ps web
-```
-
-### 8. Verifikasi Deployment
-```bash
-# Cek semua container yang berjalan
-docker ps
-
-# Cek service swarm
-docker service ls
-docker service ps web
-
-# Test akses aplikasi dari dalam container
-docker exec -it <CONTAINER_ID> curl http://localhost:8080
-```
-
-### 9. Akses Aplikasi
-Buka browser dan akses:
-```
-http://<PUBLIC_IP_EC2>:8080
-```
-
-Atau dari server sendiri:
+#### 9. Test Akses
 ```bash
 curl http://localhost:8080
 ```
+
+**PENTING**: JANGAN gunakan overlay network jika Docker diinstall via Snap. Lihat DOCKER_SWARM_GUIDE.md untuk detail lengkap.
 
 ### 10. Test Load Balancing (Round-Robin)
 Buka 3 tab browser dan refresh berkali-kali untuk melihat bahwa request dibagi ke replika berbeda.

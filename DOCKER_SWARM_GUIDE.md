@@ -1,36 +1,79 @@
-# LKPD 7 - Docker Swarm Single Node: Deployment Guide
+# LKPD 7 - Docker Swarm Single Node: Deployment Guide (Untuk Docker Snap)
 
 ## Tugas
 Modifikasi agar ada container `mariadb:11.8` yang menjadi database untuk menyimpan data dari semua replika web service.
+
+## ⚠️ PENTING: Cek Jenis Instalasi Docker
+
+Sebelum memulai, cek jenis instalasi Docker Anda:
+```bash
+sudo docker info | grep "Docker Root Dir"
+```
+
+### Jika Output: `/var/snap/docker/common/var-lib-docker`
+Docker diinstall via **Snap** (Ubuntu Core/EC2 AWS). Ada keterbatasan:
+- ❌ Overlay network untuk Swarm service akan menyebabkan error "read-only file system"
+- ✅ Solusi: Gunakan host network untuk database dan ingress network default untuk web service
+- **Ikuti panduan ini**
+
+### Jika Output: `/var/lib/docker`
+Docker diinstall via apt/manual (bukan Snap). Anda bisa menggunakan overlay network standar.
+
+**Panduan ini dibuat khusus untuk Docker Snap (Ubuntu Core/EC2 AWS).**
 
 ## Prasyarat
 - Server dengan Docker terinstall (EC2 AWS atau server lain)
 - Akses SSH ke server
 - File aplikasi appKantin sudah ada di server
 
-## Langkah-langkah Lengkap
+## Penting: Setup Permission Docker
+
+Sebelum memulai, Anda perlu memberikan akses Docker ke user Anda. Jika tidak, akan muncul error:
+```
+permission denied while trying to connect to the docker API at unix:///var/run/docker.sock
+```
+
+### Solusi 1: Gunakan sudo (Sementara - Disarankan untuk Docker Snap)
+Jalankan semua perintah Docker dengan sudo:
+```bash
+sudo docker pull trafex/php-nginx
+sudo docker swarm init
+# dst...
+```
+
+### Solusi 2: Tambah User ke Docker Group (Permanen)
+```bash
+# Tambah user ubuntu ke docker group
+sudo usermod -aG docker ubuntu
+
+# Logout dan login kembali ATAU jalankan perintah ini:
+newgrp docker
+
+# Verifikasi - sekarang bisa tanpa sudo
+docker ps
+```
+
+**Catatan**: Di Docker Snap, group docker mungkin belum ada. Jika error, gunakan solusi 1 (sudo).
+
+## Langkah-langkah Lengkap (Untuk Docker Snap)
 
 ### 1. Pull Docker Images
 ```bash
-# Pull image PHP + Nginx untuk web service
-docker pull trafex/php-nginx
-
-# Pull image MariaDB untuk database
-docker pull mariadb:11.8
+sudo docker pull trafex/php-nginx
+sudo docker pull mariadb:11.8
 ```
 
 ### 2. Inisialisasi Docker Swarm
 ```bash
 # Coba inisialisasi swarm
-docker swarm init
+sudo docker swarm init
 
-# Jika muncul error tentang multiple IP (common di WSL/EC2):
+# Jika muncul error tentang multiple IP (common di EC2):
 # Error: could not choose an IP address to advertise since this system has multiple addresses
-# Solusi: gunakan IP spesifik
-docker swarm init --advertise-addr <IP_ADDRESS>
-
-# Contoh:
-docker swarm init --advertise-addr 10.100.100.105
+# Solusi: gunakan IP spesifik (gunakan Public IP atau Private IP)
+sudo docker swarm init --advertise-addr 54.83.79.145
+# atau gunakan private IP:
+# sudo docker swarm init --advertise-addr 172.31.28.207
 
 # Output akan menampilkan token untuk join worker/manager
 ```
@@ -42,157 +85,191 @@ mkdir -p /home/ubuntu/appKantin
 cd /home/ubuntu/appKantin
 
 # Upload/copy semua file appKantin ke direktori ini
-# (via scp, git clone, atau manual upload)
+# Via git clone:
+git clone https://github.com/Deri-Nugroho/appKantin.git temp
+mv temp/* .
+mv temp/.gitignore . 2>/dev/null || true
+rm -rf temp
+
+# ATAU via scp dari local:
+# scp -r /path/to/appKantin/* ubuntu@<IP>:/home/ubuntu/appKantin/
 ```
 
-### 4. Konfigurasi Database untuk Docker Swarm
+### 4. Cek Docker Bridge Gateway IP
+```bash
+# Cari IP gateway bridge network (IP ini akan digunakan untuk koneksi ke database)
+sudo docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'
+# Output biasanya: 172.17.0.1
+# CATAT IP INI!
+```
+
+### 5. Konfigurasi Database untuk Docker Swarm
 Edit file `config/db.php`:
 ```bash
 nano config/db.php
 ```
 
-Ubah konfigurasi menjadi:
+Ubah konfigurasi menjadi (GANTI IP sesuai output langkah 4):
 ```php
 // ===== KONFIGURASI UNTUK DOCKER SWARM =====
-$DB_HOST = "db";  // Nama container MariaDB
+$DB_HOST = "172.17.0.1";  // IP bridge gateway (dari langkah 4)
 $DB_USER = "root";
 $DB_PASS = "rahasia";  // Sesuai MARIADB_ROOT_PASSWORD
 $DB_NAME = "appdb";  // Sesuai MARIADB_DATABASE
 ```
 
-### 5. Buat Network untuk Komunikasi
-```bash
-# Buat network bridge untuk komunikasi antara service dan container
-docker network create app-network
-```
+Simpan dengan: `Ctrl+X`, lalu `Y`, lalu `Enter`
 
-### 6. Jalankan Container MariaDB
+### 6. Jalankan Container MariaDB dengan Host Network
 ```bash
-# Jalankan MariaDB dengan konfigurasi environment
-docker run -d --name db \
-  -p 3306:3306 \
+# Jalankan MariaDB dengan host network (PENTING: gunakan --network host)
+sudo docker run -d --name db \
+  --network host \
   -e MARIADB_ROOT_PASSWORD=rahasia \
   -e MARIADB_DATABASE=appdb \
   -v dbdata:/var/lib/mysql \
-  --network app-network \
   mariadb:11.8
 
 # Verifikasi container berjalan
-docker ps
-docker logs db
+sudo docker ps
+sudo docker logs db
 ```
 
 ### 7. Buat Docker Service untuk Aplikasi Web
 ```bash
-# Buat service dengan 1 replika dulu
-docker service create --name web \
+# Buat service dengan 1 replika dulu (TANPA network custom - gunakan default ingress)
+# JANGAN gunakan --network app-network atau --network overlay!
+sudo docker service create --name web \
   -p 8080:8080 \
   --mount type=bind,source=/home/ubuntu/appKantin,target=/var/www/html \
-  --network app-network \
   trafex/php-nginx
 
 # Cek service
-docker service ls
-docker service ps web
+sudo docker service ls
+sudo docker service ps web
 ```
 
 ### 8. Scale Service ke 3 Replika
 ```bash
 # Scale service web ke 3 replika
-docker service scale web=3
+sudo docker service scale web=3
 
 # Cek status semua replika
-docker service ps web
+sudo docker service ps web
 ```
 
 ### 9. Verifikasi Deployment
 ```bash
 # Cek semua container yang berjalan
-docker ps
+sudo docker ps
 
 # Cek service swarm
-docker service ls
-docker service ps web
+sudo docker service ls
+sudo docker service ps web
 
 # Test akses dari server
 curl http://localhost:8080
 ```
 
+Jika curl menampilkan HTML aplikasi, deployment berhasil!
+
 ### 10. Test Load Balancing
+```bash
+# Test load balancing dengan melihat IP server yang berbeda
+for i in {1..6}; do
+  curl -s http://localhost:8080/index.php | grep -A1 "Hostname" | tail -1
+done
+```
+
+Output akan menunjukkan IP server yang berbeda (round-robin ke 3 replika).
+
+### 11. Akses dari Browser
 Buka browser dan akses:
 ```
 http://<PUBLIC_IP_EC2>:8080
 ```
 
+Contoh: http://54.83.79.145:8080
+
 Buka 3 tab browser dan refresh berkali-kali untuk melihat request dibagi ke replika berbeda.
 
-Atau gunakan curl loop dari server:
+## ⚠️ Hal yang TIDAK BOLEH Dilakukan (Untuk Docker Snap)
+
+### ❌ JANGAN Gunakan Overlay Network
 ```bash
-for i in {1..6}; do
-  curl -s http://localhost:8080/index.php | grep -o '<b>[^<]*</b>' | head -1
-done
+# JANGAN jalankan ini - akan menyebabkan error "read-only file system"
+sudo docker network create --driver overlay app-network
 ```
 
-### 11. Cek Container ID Setiap Replika
+### ❌ JANGAN Connect Service ke Overlay Network
 ```bash
-# Lihat task service
-docker service ps web
-
-# Lihat semua container dengan format table
-docker ps --format 'table {{.ID}}\t{{.Names}}'
+# JANGAN jalankan ini - akan menyebabkan error
+sudo docker service update --network-add app-network web
 ```
+
+### ❌ JANGAN Jalankan MariaDB sebagai Swarm Service
+```bash
+# JANGAN jalankan ini - akan menyebabkan error
+sudo docker service create --name db mariadb:11.8
+```
+
+### ❌ JANGAN Gunakan Network Custom untuk Web Service
+```bash
+# JANGAN gunakan --network flag saat membuat web service
+sudo docker service create --name web --network app-network ...
+```
+
+## ✅ Solusi yang Benar
+
+Gunakan:
+- ✅ Host network untuk MariaDB container (standalone)
+- ✅ Ingress network default untuk web service (swarm)
+- ✅ Bridge gateway IP (172.17.0.1) untuk koneksi web ke db
 
 ## Perintah-perintah Penting
 
 ### Cek Status
 ```bash
-# Cek service
-docker service ls
-docker service ps web
-
-# Cek container
-docker ps
-
-# Cek logs
-docker service logs web
-docker logs db
+sudo docker service ls
+sudo docker service ps web
+sudo docker ps
 ```
 
 ### Scale Service
 ```bash
 # Tambah replika
-docker service scale web=5
+sudo docker service scale web=5
 
 # Kurangi replika
-docker service scale web=2
+sudo docker service scale web=2
 ```
 
 ### Update Service
 ```bash
 # Update image
-docker service update --image trafex/php-nginx web
+sudo docker service update --image trafex/php-nginx web
 
 # Force update (restart service)
-docker service update --force web
+sudo docker service update --force web
 ```
 
 ### Hapus Service dan Container
 ```bash
 # Hapus service web
-docker service rm web
+sudo docker service rm web
 
 # Hapus container database
-docker stop db
-docker rm db
+sudo docker stop db
+sudo docker rm db
 
 # Hapus volume database (hati-hati - data akan hilang!)
-docker volume rm dbdata
+sudo docker volume rm dbdata
 ```
 
 ### Keluar dari Swarm
 ```bash
 # Keluar dari swarm (force)
-docker swarm leave --force
+sudo docker swarm leave --force
 ```
 
 ## Arsitektur
@@ -207,6 +284,7 @@ docker swarm leave --force
 │  │   Web.1      │  │   Web.2      │    │
 │  │ (Replica 1)  │  │ (Replica 2)  │    │
 │  │ PHP+Nginx    │  │ PHP+Nginx    │    │
+│  │ Ingress Net  │  │ Ingress Net  │    │
 │  └──────┬───────┘  └──────┬───────┘    │
 │         │                  │            │
 │         └────────┬─────────┘            │
@@ -220,7 +298,8 @@ docker swarm leave --force
 │         ┌────────▼────────┐             │
 │         │   Container db  │             │
 │         │   MariaDB 11.8  │             │
-│         │   (Shared DB)   │             │
+│         │   Host Network  │             │
+│         │   172.17.0.1    │             │
 │         └─────────────────┘             │
 │                                          │
 └─────────────────────────────────────────┘
@@ -228,59 +307,42 @@ docker swarm leave --force
 
 ## Troubleshooting
 
-### Service web tidak bisa connect ke database
-```bash
-# Cek apakah container db berjalan
-docker ps | grep db
+### Error: "permission denied while trying to connect to the docker API"
+**Solusi**: Gunakan `sudo` di depan semua perintah Docker
 
-# Cek network
-docker network inspect app-network
+### Error: "read-only file system" saat membuat service dengan overlay network
+**Solusi**: JANGAN gunakan overlay network. Gunakan ingress network default (tanpa --network flag)
 
-# Pastikan keduanya di network yang sama
-docker network connect app-network db
-docker service update --network-add app-network web
-```
+### Error: "Name does not resolve" saat connect ke database
+**Solusi**: Pastikan config/db.php menggunakan IP bridge gateway (172.17.0.1), bukan hostname "db"
+
+### Service tidak bisa connect ke database
+**Solusi**:
+1. Pastikan MariaDB berjalan dengan `--network host`
+2. Pastikan config/db.php menggunakan IP 172.17.0.1
+3. Cek dengan: `sudo docker ps` untuk memastikan container db berjalan
 
 ### Container tidak bisa start
+**Solusi**:
 ```bash
 # Cek logs service
-docker service logs web
+sudo docker service logs web
 
 # Cek logs container
-docker logs <CONTAINER_ID>
+sudo docker logs <CONTAINER_ID>
 
 # Cek resource
-docker stats
-```
-
-### Database connection failed di aplikasi
-```bash
-# Cek config/db.php
-cat config/db.php
-
-# Pastikan konfigurasi sesuai:
-# - $DB_HOST = "db"
-# - $DB_USER = "root"
-# - $DB_PASS = "rahasia"
-# - $DB_NAME = "appdb"
-
-# Test koneksi dari dalam container web
-docker exec -it <WEB_CONTAINER_ID> bash
-# Di dalam container:
-apt-get update && apt-get install -y mysql-client
-mysql -h db -u root -prahasia appdb
+sudo docker stats
 ```
 
 ### Port sudah digunakan
+**Solusi**:
 ```bash
 # Cek port yang sedang digunakan
 sudo netstat -tulpn | grep 8080
 
-# Atau
-sudo lsof -i :8080
-
 # Gunakan port lain jika perlu
-docker service create --name web -p 9090:8080 ...
+sudo docker service create --name web -p 9090:8080 ...
 ```
 
 ## Catatan Penting
@@ -293,16 +355,16 @@ docker service create --name web -p 9090:8080 ...
 
 4. **Routing Mesh**: Docker Swarm routing mesh secara otomatis membagi request ke replika secara round-robin.
 
-5. **Network Communication**: Service web dan container db harus berada di network yang sama untuk bisa berkomunikasi.
+5. **Network Communication**: Karena keterbatasan Docker Snap, kita menggunakan host network untuk db dan ingress network untuk web, dengan koneksi via bridge gateway IP.
 
 ## Laporan untuk GC
 
 Setelah selesai, buat laporan yang berisi:
 
 1. **Screenshot Docker Swarm Status**
-   - `docker service ls`
-   - `docker service ps web`
-   - `docker ps`
+   - `sudo docker service ls`
+   - `sudo docker service ps web`
+   - `sudo docker ps`
 
 2. **Screenshot Aplikasi**
    - Halaman utama aplikasi dari browser
@@ -310,14 +372,18 @@ Setelah selesai, buat laporan yang berisi:
    - Halaman Dapur dengan pesanan
 
 3. **Screenshot Load Balancing**
-   - Hasil curl loop menunjukkan hostname/IP berbeda
-   - Container ID dari masing-masing replika
+   - Hasil curl loop menunjukkan IP server berbeda:
+   ```bash
+   for i in {1..6}; do
+     curl -s http://localhost:8080/index.php | grep -A1 "Hostname" | tail -1
+   done
+   ```
 
 4. **Penjelasan Arsitektur**
    - Gambar arsitektur Docker Swarm Single Node
-   - Penjelasan bagaimana 3 replika mengakses 1 database
+   - Penjelasan bagaimana 3 replika mengakses 1 database via bridge gateway IP
 
 5. **Kesimpulan**
    - Apakah tugas berhasil diselesaikan?
    - Apa yang dipelajari tentang Docker Swarm?
-   - Tantangan yang dihadapi dan solusinya
+   - Tantangan yang dihadapi (Docker Snap limitation) dan solusinya
