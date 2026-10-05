@@ -6,6 +6,15 @@
  */
 
 // ==== KONFIGURASI DATABASE (SESUAIKAN JIKA PERLU) ====
+
+// ===== KONFIGURASI UNTUK DOCKER SWARM =====
+// Saat menggunakan Docker Swarm dengan MariaDB container:
+// $DB_HOST = "db";  // Nama container MariaDB
+// $DB_USER = "root";
+// $DB_PASS = "rahasia";  // Sesuai MARIADB_ROOT_PASSWORD
+// $DB_NAME = "appdb";  // Sesuai MARIADB_DATABASE
+
+// ===== KONFIGURASI LOKAL (XAMPP/Laragon) =====
 $DB_HOST = "localhost";
 $DB_USER = "root";
 $DB_PASS = "";
