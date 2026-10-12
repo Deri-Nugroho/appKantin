@@ -89,7 +89,7 @@ $info_warna     = 'hsl(' . (hexdec(substr(md5($info_hostname), 0, 6)) % 360) . '
 </div>
 <nav class="navbar navbar-dark navbar-expand-lg mb-4" style="background-color:#c0392b;">
     <div class="container">
-        <a class="navbar-brand fw-bold" href="index.php">🍽️ Aplikasi Kantin</a>
+        <a class="navbar-brand fw-bold" href="index.php">🍽️ Aplikasi Kantin - Deri (v2)</a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain">
             <span class="navbar-toggler-icon"></span>
         </button>
