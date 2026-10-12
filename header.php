@@ -1,7 +1,7 @@
 <?php
 // Cegah cache: info server harus selalu berasal dari request yang baru
 if (!headers_sent()) {
-    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0')
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     header('Pragma: no-cache');
 }
 
